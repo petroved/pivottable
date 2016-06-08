@@ -610,6 +610,12 @@
         return result;
       };
 
+      PivotData.convertValueToClassname = function(ugly) {
+        var str;
+        str = ugly + '';
+        return str && str.replace(/[^-_a-zA-Z0-9]+/g, '-').toLowerCase();
+      };
+
       PivotData.prototype.arrSort = function(attrs) {
         var a, sortersArr;
         sortersArr = (function() {
@@ -737,7 +743,7 @@
     Default Renderer for hierarchical table layout
      */
     pivotTableRenderer = function(pivotData, opts) {
-      var aggregator, c, colAttrs, colKey, colKeys, defaults, i, j, r, result, rowAttrs, rowKey, rowKeys, spanSize, td, th, totalAggregator, tr, txt, val, x;
+      var aggregator, c, className, colAttrs, colKey, colKeys, defaults, i, j, r, result, rowAttrs, rowKey, rowKeys, spanSize, td, th, totalAggregator, tr, txt, val, x;
       defaults = {
         localeStrings: {
           totals: "Totals"
@@ -858,8 +864,9 @@
           colKey = colKeys[j];
           aggregator = pivotData.getAggregator(rowKey, colKey);
           val = aggregator.value();
+          className = PivotData.convertValueToClassname(val);
           td = document.createElement("td");
-          td.className = "pvtVal row" + i + " col" + j;
+          td.className = "pvtVal row" + i + " col" + j + " cell-" + className;
           td.textContent = aggregator.format(val);
           td.setAttribute("data-value", val);
           tr.appendChild(td);
