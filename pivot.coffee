@@ -44,27 +44,27 @@ callWithJQuery ($) ->
         count: (formatter=usFmtInt) -> () -> (data, rowKey, colKey) ->
             count: 0
             push:  -> @count++
-            value: -> @count
+            value: -> [ @count ]
             format: formatter
 
         countUnique: (formatter=usFmtInt) -> ([attr]) -> (data, rowKey, colKey) ->
             uniq: []
             push: (record) -> @uniq.push(record[attr]) if record[attr] not in @uniq
-            value: -> @uniq.length
+            value: -> [ @uniq.length ]
             format: formatter
             numInputs: if attr? then 0 else 1
 
         listUnique: (sep) -> ([attr]) -> (data, rowKey, colKey)  ->
             uniq: []
             push: (record) -> @uniq.push(record[attr]) if record[attr] not in @uniq
-            value: -> @uniq.join sep
+            value: -> [ @uniq.join sep ]
             format: (x) -> x
             numInputs: if attr? then 0 else 1
 
         sum: (formatter=usFmt) -> ([attr]) -> (data, rowKey, colKey) ->
             sum: 0
             push: (record) -> @sum += parseFloat(record[attr]) if not isNaN parseFloat(record[attr])
-            value: -> @sum
+            value: -> [ @sum ]
             format: formatter
             numInputs: if attr? then 0 else 1
 
@@ -73,7 +73,7 @@ callWithJQuery ($) ->
             push: (record) ->
                 x = parseFloat(record[attr])
                 if not isNaN x then @val = Math.min(x, @val ? x)
-            value: -> @val
+            value: -> [ @val ]
             format: formatter
             numInputs: if attr? then 0 else 1
 
@@ -82,7 +82,7 @@ callWithJQuery ($) ->
             push: (record) ->
                 x = parseFloat(record[attr])
                 if not isNaN x then @val = Math.max(x, @val ? x)
-            value: -> @val
+            value: -> [ @val ]
             format: formatter
             numInputs: if attr? then 0 else 1
 
@@ -93,7 +93,7 @@ callWithJQuery ($) ->
                 if not isNaN parseFloat(record[attr])
                     @sum += parseFloat(record[attr])
                     @len++
-            value: -> @sum/@len
+            value: -> [ @sum/@len ]
             format: formatter
             numInputs: if attr? then 0 else 1
 
@@ -103,7 +103,7 @@ callWithJQuery ($) ->
             push: (record) ->
                 @sumNum   += parseFloat(record[num])   if not isNaN parseFloat(record[num])
                 @sumDenom += parseFloat(record[denom]) if not isNaN parseFloat(record[denom])
-            value: -> @sumNum/@sumDenom
+            value: -> [ @sumNum/@sumDenom ]
             format: formatter
             numInputs: if num? and denom? then 0 else 2
 
@@ -115,9 +115,10 @@ callWithJQuery ($) ->
                 @sumDenom += parseFloat(record[denom]) if not isNaN parseFloat(record[denom])
             value: ->
                 sign = if upper then 1 else -1
-                (0.821187207574908/@sumDenom + @sumNum/@sumDenom + 1.2815515655446004*sign*
+                res = (0.821187207574908/@sumDenom + @sumNum/@sumDenom + 1.2815515655446004*sign*
                     Math.sqrt(0.410593603787454/ (@sumDenom*@sumDenom) + (@sumNum*(1 - @sumNum/ @sumDenom))/ (@sumDenom*@sumDenom)))/
                     (1 + 1.642374415149816/@sumDenom)
+                return [ res ]
             format: formatter
             numInputs: if num? and denom? then 0 else 2
 
@@ -126,7 +127,7 @@ callWithJQuery ($) ->
             inner: wrapped(x...)(data, rowKey, colKey)
             push: (record) -> @inner.push record
             format: formatter
-            value: -> @inner.value() / data.getAggregator(@selector...).inner.value()
+            value: -> [ @inner.value() / data.getAggregator(@selector...).inner.value() ]
             numInputs: wrapped(x...)().numInputs
 
     #default aggregators & renderers use US naming and number formatting
@@ -242,6 +243,93 @@ callWithJQuery ($) ->
         else
             return naturalSort
 
+    normalizeTable = ($table) ->
+        # 1. Normalize colspan by creating elements for each
+        $table.find('th[colspan], td[colspan]').each ->
+          cell  = $(this)
+          count = parseInt(cell.attr('colspan')) - 1
+          cell.removeAttr('colspan')
+       
+          while count > 0
+            cell.after(cell.clone())
+            cell = cell
+            count--
+       
+        # 2. Normalize rowspan by creating rows for each
+        $table.find('th[rowspan], td[rowspan]').each ->
+          cell  = $(this)
+          row   = cell.parent()
+          index = cell.get(0).cellIndex
+          count = parseInt(cell.attr('rowspan')) - 1
+          cell.removeAttr('rowspan')
+       
+          while count > 0
+            row   = row.next()
+            row.find("td:nth-child(#{index + 1}), th:nth-child(#{index + 1})").before(cell.clone())
+            count--
+            
+        # 3. Merge headers with same key, so if you have 3 headers b/c of colspan grouping, they will become 1
+        headers     = []
+        separator = " - "
+        removeCount = 0
+        headerPattern = null
+        
+        $table.find('tr').each (i) ->
+          cell = $(this).find('td:nth-child(1), th:nth-child(1)')
+          text = cell.text().trim()
+    
+          if i == 0
+            headerKey = text
+            headerPattern = new RegExp("^#{headerKey}$", 'i')
+            $(this).children().each ->
+              headers.push([$(this).text().trim()])
+          else
+            # if the next row matches, then we still continue, b/c we want to remove these rows
+            if text.match(headerPattern)
+              $(this).children().each (i) ->
+                header  = headers[i]
+                text    = $(this).text().trim()
+                header.push(text) if header.indexOf(text) == -1
+    
+              $(this).remove()
+            else
+              # otherwise, we don't need to keep iterating b/c we're past the header section
+              return false
+              
+          $table.find('tr:first').children().each (i) ->
+            $(this).text(headers[i].join(separator))
+
+    exportTableToCSV = (filename) ->
+        
+        exportTable = $(".pvtTable").clone()
+        
+        normalizeTable exportTable
+        $rows = exportTable.find("tr:has(td),tr:has(th)")
+        
+        # Temporary delimiter characters unlikely to be typed by keyboard
+        # This is to avoid accidentally splitting the actual contents
+        tmpColDelim = String.fromCharCode(11) # vertical tab character
+        tmpRowDelim = String.fromCharCode(0) # null character
+        
+        # actual delimiter characters for CSV format
+        colDelim = "\",\""
+        rowDelim = "\"\r\n\""
+        
+        # Grab text from table into CSV formatted string
+        # escape double quotes
+        csv = "\"" + $rows.map((i, row) ->
+          $row = $(row)
+     
+          $cols = $row.find("td,th")
+          $cols.map((j, col) ->
+            $col = $(col)
+            text = $col.text()
+            text.replace "\"", "\"\""
+          ).get().join tmpColDelim
+        ).get().join(tmpRowDelim).split(tmpRowDelim).join(rowDelim).split(tmpColDelim).join(colDelim) + "\""
+
+        return csv
+
     ###
     Data Model class
     ###
@@ -303,7 +391,11 @@ callWithJQuery ($) ->
             return result
 
         @convertValueToClassname = (ugly) ->
-            str = ugly + ''
+            if Array.isArray(ugly)
+                str = "#{ugly[ugly.length - 1]}"
+            else
+                str = "#{ugly}"
+
             return str && str.replace(/[^-_a-zA-Z0-9]+/g, '-').toLowerCase()
 
         arrSort: (attrs) =>
@@ -372,7 +464,7 @@ callWithJQuery ($) ->
 
     #expose these to the outside world
     $.pivotUtilities = {aggregatorTemplates, aggregators, renderers, derivers, locales,
-        naturalSort, numberFormat, sortAs, PivotData}
+        naturalSort, numberFormat, sortAs, exportTableToCSV, PivotData}
 
     ###
     Default Renderer for hierarchical table layout
@@ -431,6 +523,9 @@ callWithJQuery ($) ->
                     th = document.createElement("th")
                     th.className = "pvtColLabel"
                     th.textContent = colKey[j]
+                    if !colKey[j]
+                        th.textContent = "(empty)"
+                        th.className += " pvtEmptyLabel"
                     th.setAttribute("colspan", x)
                     if parseInt(j) == colAttrs.length-1 and rowAttrs.length != 0
                         th.setAttribute("rowspan", 2)
@@ -467,6 +562,9 @@ callWithJQuery ($) ->
                     th = document.createElement("th")
                     th.className = "pvtRowLabel"
                     th.textContent = txt
+                    if !txt
+                        th.textContent = "(empty)"
+                        th.className += " pvtEmptyLabel"
                     th.setAttribute("rowspan", x)
                     if parseInt(j) == rowAttrs.length-1 and colAttrs.length !=0
                         th.setAttribute("colspan",2)
@@ -474,19 +572,40 @@ callWithJQuery ($) ->
             for own j, colKey of colKeys #this is the tight loop
                 aggregator = pivotData.getAggregator(rowKey, colKey)
                 val = aggregator.value()
-                className = PivotData.convertValueToClassname(val)
                 td = document.createElement("td")
-                td.className = "pvtVal row#{i} col#{j} cell-#{className}"
-                td.textContent = aggregator.format(val)
-                td.setAttribute("data-value", val)
+
+                cellHeader = PivotData.convertValueToClassname(colKey)
+                if val and val[0] and typeof aggregator.formatHtml is 'function'
+                  htmlEl = aggregator.formatHtml(val, rowKey, colKey, aggregator.type)
+                  td.setAttribute("data-value", val[0])
+                  td.appendChild htmlEl
+                else if val and val[0]
+                  cellValue = PivotData.convertValueToClassname(val[0])
+                  td.setAttribute("data-value", val[0])
+                  td.textContent = aggregator.format(val[0])
+                else
+                  td.setAttribute("data-value", val)
+                  td.textContent = aggregator.format(val)
+                  cellValue = PivotData.convertValueToClassname(val)
+                td.className = "pvtVal row#{i} col#{j} cell-#{cellHeader}-#{cellValue}"
                 tr.appendChild td
 
             totalAggregator = pivotData.getAggregator(rowKey, [])
             val = totalAggregator.value()
             td = document.createElement("td")
             td.className = "pvtTotal rowTotal"
-            td.textContent = totalAggregator.format(val)
-            td.setAttribute("data-value", val)
+
+            if val and val[0] and typeof aggregator.formatHtml is 'function'
+              td.setAttribute("data-value", val[0])
+              htmlEl = totalAggregator.formatHtml(val)
+              td.appendChild htmlEl
+            else if val and val[0]
+              td.setAttribute("data-value", val[0])
+              td.textContent = totalAggregator.format(val[0])
+            else
+              td.textContent = totalAggregator.format(val)
+              td.setAttribute("data-value", val)
+
             td.setAttribute("data-for", "row"+i)
             tr.appendChild td
             result.appendChild tr
@@ -503,16 +622,36 @@ callWithJQuery ($) ->
             val = totalAggregator.value()
             td = document.createElement("td")
             td.className = "pvtTotal colTotal"
-            td.textContent = totalAggregator.format(val)
-            td.setAttribute("data-value", val)
+
+            if val and val[0] and typeof aggregator.formatHtml is 'function'
+              td.setAttribute("data-value", val[0])
+              htmlEl = totalAggregator.formatHtml(val)
+              td.appendChild htmlEl
+            else if val and val[0]
+              td.setAttribute("data-value", val[0])
+              td.textContent = totalAggregator.format(val[0])
+            else
+              td.textContent = totalAggregator.format(val)
+              td.setAttribute("data-value", val)
+
             td.setAttribute("data-for", "col"+j)
             tr.appendChild td
         totalAggregator = pivotData.getAggregator([], [])
         val = totalAggregator.value()
         td = document.createElement("td")
         td.className = "pvtGrandTotal"
-        td.textContent = totalAggregator.format(val)
-        td.setAttribute("data-value", val)
+
+        if val and val[0] and typeof aggregator.formatHtml is 'function'
+          td.setAttribute("data-value", val[0])
+          htmlEl = totalAggregator.formatHtml(val)
+          td.appendChild htmlEl
+        else if val and val[0]
+          td.setAttribute("data-value", val[0])
+          td.textContent = totalAggregator.format(val[0])
+        else
+          td.textContent = totalAggregator.format(val)
+          td.setAttribute("data-value", val)
+
         tr.appendChild td
         result.appendChild tr
 

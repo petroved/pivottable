@@ -20,7 +20,7 @@
     /*
     Utilities
      */
-    var PivotData, addSeparators, aggregatorTemplates, aggregators, dayNamesEn, derivers, getSort, locales, mthNamesEn, naturalSort, numberFormat, pivotTableRenderer, renderers, sortAs, usFmt, usFmtInt, usFmtPct, zeroPad;
+    var PivotData, addSeparators, aggregatorTemplates, aggregators, dayNamesEn, derivers, exportTableToCSV, getSort, locales, mthNamesEn, naturalSort, normalizeTable, numberFormat, pivotTableRenderer, renderers, sortAs, usFmt, usFmtInt, usFmtPct, zeroPad;
     addSeparators = function(nStr, thousandsSep, decimalSep) {
       var rgx, x, x1, x2;
       nStr += '';
@@ -79,7 +79,7 @@
                 return this.count++;
               },
               value: function() {
-                return this.count;
+                return [this.count];
               },
               format: formatter
             };
@@ -103,7 +103,7 @@
                 }
               },
               value: function() {
-                return this.uniq.length;
+                return [this.uniq.length];
               },
               format: formatter,
               numInputs: attr != null ? 0 : 1
@@ -125,7 +125,7 @@
                 }
               },
               value: function() {
-                return this.uniq.join(sep);
+                return [this.uniq.join(sep)];
               },
               format: function(x) {
                 return x;
@@ -151,7 +151,7 @@
                 }
               },
               value: function() {
-                return this.sum;
+                return [this.sum];
               },
               format: formatter,
               numInputs: attr != null ? 0 : 1
@@ -177,7 +177,7 @@
                 }
               },
               value: function() {
-                return this.val;
+                return [this.val];
               },
               format: formatter,
               numInputs: attr != null ? 0 : 1
@@ -203,7 +203,7 @@
                 }
               },
               value: function() {
-                return this.val;
+                return [this.val];
               },
               format: formatter,
               numInputs: attr != null ? 0 : 1
@@ -229,7 +229,7 @@
                 }
               },
               value: function() {
-                return this.sum / this.len;
+                return [this.sum / this.len];
               },
               format: formatter,
               numInputs: attr != null ? 0 : 1
@@ -257,7 +257,7 @@
                 }
               },
               value: function() {
-                return this.sumNum / this.sumDenom;
+                return [this.sumNum / this.sumDenom];
               },
               format: formatter,
               numInputs: (num != null) && (denom != null) ? 0 : 2
@@ -288,9 +288,10 @@
                 }
               },
               value: function() {
-                var sign;
+                var res, sign;
                 sign = upper ? 1 : -1;
-                return (0.821187207574908 / this.sumDenom + this.sumNum / this.sumDenom + 1.2815515655446004 * sign * Math.sqrt(0.410593603787454 / (this.sumDenom * this.sumDenom) + (this.sumNum * (1 - this.sumNum / this.sumDenom)) / (this.sumDenom * this.sumDenom))) / (1 + 1.642374415149816 / this.sumDenom);
+                res = (0.821187207574908 / this.sumDenom + this.sumNum / this.sumDenom + 1.2815515655446004 * sign * Math.sqrt(0.410593603787454 / (this.sumDenom * this.sumDenom) + (this.sumNum * (1 - this.sumNum / this.sumDenom)) / (this.sumDenom * this.sumDenom))) / (1 + 1.642374415149816 / this.sumDenom);
+                return [res];
               },
               format: formatter,
               numInputs: (num != null) && (denom != null) ? 0 : 2
@@ -321,7 +322,7 @@
               },
               format: formatter,
               value: function() {
-                return this.inner.value() / data.getAggregator.apply(data, this.selector).inner.value();
+                return [this.inner.value() / data.getAggregator.apply(data, this.selector).inner.value()];
               },
               numInputs: wrapped.apply(null, x)().numInputs
             };
@@ -508,6 +509,92 @@
         return naturalSort;
       }
     };
+    normalizeTable = function($table) {
+      var headerPattern, headers, removeCount, separator;
+      $table.find('th[colspan], td[colspan]').each(function() {
+        var cell, count, results;
+        cell = $(this);
+        count = parseInt(cell.attr('colspan')) - 1;
+        cell.removeAttr('colspan');
+        results = [];
+        while (count > 0) {
+          cell.after(cell.clone());
+          cell = cell;
+          results.push(count--);
+        }
+        return results;
+      });
+      $table.find('th[rowspan], td[rowspan]').each(function() {
+        var cell, count, index, results, row;
+        cell = $(this);
+        row = cell.parent();
+        index = cell.get(0).cellIndex;
+        count = parseInt(cell.attr('rowspan')) - 1;
+        cell.removeAttr('rowspan');
+        results = [];
+        while (count > 0) {
+          row = row.next();
+          row.find("td:nth-child(" + (index + 1) + "), th:nth-child(" + (index + 1) + ")").before(cell.clone());
+          results.push(count--);
+        }
+        return results;
+      });
+      headers = [];
+      separator = " - ";
+      removeCount = 0;
+      headerPattern = null;
+      return $table.find('tr').each(function(i) {
+        var cell, headerKey, text;
+        cell = $(this).find('td:nth-child(1), th:nth-child(1)');
+        text = cell.text().trim();
+        if (i === 0) {
+          headerKey = text;
+          headerPattern = new RegExp("^" + headerKey + "$", 'i');
+          $(this).children().each(function() {
+            return headers.push([$(this).text().trim()]);
+          });
+        } else {
+          if (text.match(headerPattern)) {
+            $(this).children().each(function(i) {
+              var header;
+              header = headers[i];
+              text = $(this).text().trim();
+              if (header.indexOf(text) === -1) {
+                return header.push(text);
+              }
+            });
+            $(this).remove();
+          } else {
+            return false;
+          }
+        }
+        return $table.find('tr:first').children().each(function(i) {
+          return $(this).text(headers[i].join(separator));
+        });
+      });
+    };
+    exportTableToCSV = function(filename) {
+      var $rows, colDelim, csv, exportTable, rowDelim, tmpColDelim, tmpRowDelim;
+      exportTable = $(".pvtTable").clone();
+      normalizeTable(exportTable);
+      $rows = exportTable.find("tr:has(td),tr:has(th)");
+      tmpColDelim = String.fromCharCode(11);
+      tmpRowDelim = String.fromCharCode(0);
+      colDelim = "\",\"";
+      rowDelim = "\"\r\n\"";
+      csv = "\"" + $rows.map(function(i, row) {
+        var $cols, $row;
+        $row = $(row);
+        $cols = $row.find("td,th");
+        return $cols.map(function(j, col) {
+          var $col, text;
+          $col = $(col);
+          text = $col.text();
+          return text.replace("\"", "\"\"");
+        }).get().join(tmpColDelim);
+      }).get().join(tmpRowDelim).split(tmpRowDelim).join(rowDelim).split(tmpColDelim).join(colDelim) + "\"";
+      return csv;
+    };
 
     /*
     Data Model class
@@ -612,7 +699,11 @@
 
       PivotData.convertValueToClassname = function(ugly) {
         var str;
-        str = ugly + '';
+        if (Array.isArray(ugly)) {
+          str = "" + ugly[ugly.length - 1];
+        } else {
+          str = "" + ugly;
+        }
         return str && str.replace(/[^-_a-zA-Z0-9]+/g, '-').toLowerCase();
       };
 
@@ -736,6 +827,7 @@
       naturalSort: naturalSort,
       numberFormat: numberFormat,
       sortAs: sortAs,
+      exportTableToCSV: exportTableToCSV,
       PivotData: PivotData
     };
 
@@ -743,7 +835,7 @@
     Default Renderer for hierarchical table layout
      */
     pivotTableRenderer = function(pivotData, opts) {
-      var aggregator, c, className, colAttrs, colKey, colKeys, defaults, i, j, r, result, rowAttrs, rowKey, rowKeys, spanSize, td, th, totalAggregator, tr, txt, val, x;
+      var aggregator, c, cellHeader, cellValue, colAttrs, colKey, colKeys, defaults, htmlEl, i, j, r, result, rowAttrs, rowKey, rowKeys, spanSize, td, th, totalAggregator, tr, txt, val, x;
       defaults = {
         localeStrings: {
           totals: "Totals"
@@ -806,6 +898,10 @@
             th = document.createElement("th");
             th.className = "pvtColLabel";
             th.textContent = colKey[j];
+            if (!colKey[j]) {
+              th.textContent = "(empty)";
+              th.className += " pvtEmptyLabel";
+            }
             th.setAttribute("colspan", x);
             if (parseInt(j) === colAttrs.length - 1 && rowAttrs.length !== 0) {
               th.setAttribute("rowspan", 2);
@@ -852,6 +948,10 @@
             th = document.createElement("th");
             th.className = "pvtRowLabel";
             th.textContent = txt;
+            if (!txt) {
+              th.textContent = "(empty)";
+              th.className += " pvtEmptyLabel";
+            }
             th.setAttribute("rowspan", x);
             if (parseInt(j) === rowAttrs.length - 1 && colAttrs.length !== 0) {
               th.setAttribute("colspan", 2);
@@ -864,19 +964,39 @@
           colKey = colKeys[j];
           aggregator = pivotData.getAggregator(rowKey, colKey);
           val = aggregator.value();
-          className = PivotData.convertValueToClassname(val);
           td = document.createElement("td");
-          td.className = "pvtVal row" + i + " col" + j + " cell-" + className;
-          td.textContent = aggregator.format(val);
-          td.setAttribute("data-value", val);
+          cellHeader = PivotData.convertValueToClassname(colKey);
+          if (val && val[0] && typeof aggregator.formatHtml === 'function') {
+            htmlEl = aggregator.formatHtml(val, rowKey, colKey, aggregator.type);
+            td.setAttribute("data-value", val[0]);
+            td.appendChild(htmlEl);
+          } else if (val && val[0]) {
+            cellValue = PivotData.convertValueToClassname(val[0]);
+            td.setAttribute("data-value", val[0]);
+            td.textContent = aggregator.format(val[0]);
+          } else {
+            td.setAttribute("data-value", val);
+            td.textContent = aggregator.format(val);
+            cellValue = PivotData.convertValueToClassname(val);
+          }
+          td.className = "pvtVal row" + i + " col" + j + " cell-" + cellHeader + "-" + cellValue;
           tr.appendChild(td);
         }
         totalAggregator = pivotData.getAggregator(rowKey, []);
         val = totalAggregator.value();
         td = document.createElement("td");
         td.className = "pvtTotal rowTotal";
-        td.textContent = totalAggregator.format(val);
-        td.setAttribute("data-value", val);
+        if (val && val[0] && typeof aggregator.formatHtml === 'function') {
+          td.setAttribute("data-value", val[0]);
+          htmlEl = totalAggregator.formatHtml(val);
+          td.appendChild(htmlEl);
+        } else if (val && val[0]) {
+          td.setAttribute("data-value", val[0]);
+          td.textContent = totalAggregator.format(val[0]);
+        } else {
+          td.textContent = totalAggregator.format(val);
+          td.setAttribute("data-value", val);
+        }
         td.setAttribute("data-for", "row" + i);
         tr.appendChild(td);
         result.appendChild(tr);
@@ -894,8 +1014,17 @@
         val = totalAggregator.value();
         td = document.createElement("td");
         td.className = "pvtTotal colTotal";
-        td.textContent = totalAggregator.format(val);
-        td.setAttribute("data-value", val);
+        if (val && val[0] && typeof aggregator.formatHtml === 'function') {
+          td.setAttribute("data-value", val[0]);
+          htmlEl = totalAggregator.formatHtml(val);
+          td.appendChild(htmlEl);
+        } else if (val && val[0]) {
+          td.setAttribute("data-value", val[0]);
+          td.textContent = totalAggregator.format(val[0]);
+        } else {
+          td.textContent = totalAggregator.format(val);
+          td.setAttribute("data-value", val);
+        }
         td.setAttribute("data-for", "col" + j);
         tr.appendChild(td);
       }
@@ -903,8 +1032,17 @@
       val = totalAggregator.value();
       td = document.createElement("td");
       td.className = "pvtGrandTotal";
-      td.textContent = totalAggregator.format(val);
-      td.setAttribute("data-value", val);
+      if (val && val[0] && typeof aggregator.formatHtml === 'function') {
+        td.setAttribute("data-value", val[0]);
+        htmlEl = totalAggregator.formatHtml(val);
+        td.appendChild(htmlEl);
+      } else if (val && val[0]) {
+        td.setAttribute("data-value", val[0]);
+        td.textContent = totalAggregator.format(val[0]);
+      } else {
+        td.textContent = totalAggregator.format(val);
+        td.setAttribute("data-value", val);
+      }
       tr.appendChild(td);
       result.appendChild(tr);
       result.setAttribute("data-numrows", rowKeys.length);
